@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  chinese-search:
+    build: .
+    container_name: chinese-search-api
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./documents:/app/documents:ro
+      - ./chinese_index:/app/chinese_index
+      - ./logs:/app/logs
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=5002
+      - DEBUG=False
+      - DOCUMENTS_DIR=/app/documents
+      - INDEX_DIR=/app/chinese_index
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"\]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  nginx:
+    image: nginx:alpine
+    container_name: chinese-search-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - chinese-search
+    restart: unless-stopped
