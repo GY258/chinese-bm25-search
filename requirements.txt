@@ -1,0 +1,8 @@
+flask==2.3.3
+numpy==1.24.3
+jieba==0.42.1
+python-dotenv==1.0.0
+werkzeug==2.3.7
+click==8.1.7
+# Optional: for advanced Chinese text processing
+opencc-python-reimplemented==0.1.7
