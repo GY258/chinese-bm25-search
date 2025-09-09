@@ -160,6 +160,7 @@ class ChineseDocumentProcessor:
                 'l',   # temporary idiom
                 'j',   # abbreviation
                 'eng', # English words
+                'm',   # measure word (e.g., 克, 个, 杯)
                 'x',   # unknown words (often domain-specific terms)
             }
             

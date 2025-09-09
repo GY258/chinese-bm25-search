@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 search_engine = None
 last_indexed = None
 
+# 在模块导入时立即初始化搜索引擎
 def initialize_search_engine():
     """初始化搜索引擎"""
     global search_engine, last_indexed
@@ -48,6 +49,9 @@ def initialize_search_engine():
     except Exception as e:
         logger.error(f"搜索引擎初始化失败: {e}")
         return False
+
+# 在模块导入时执行初始化
+initialize_search_engine()
 
 # ==================== API 端点 ====================
 

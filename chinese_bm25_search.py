@@ -108,7 +108,9 @@ class ChineseBM25Search:
         scored_docs = []
         for doc_id in candidate_docs:
             score = self._calculate_bm25_score(query_terms, doc_id)
-            if score > 0:
+            # Include documents that contain the query terms, even if score is 0
+            # This handles cases with small document collections where IDF might be 0
+            if score >= 0:
                 doc_data = self.document_index[doc_id]
                 scored_docs.append({
                     'doc_id': doc_id,

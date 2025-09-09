@@ -10,14 +10,14 @@ class ChineseConfig:
     MAX_DOC_SIZE = 10 * 1024 * 1024  # 10MB max file size
     SUPPORTED_EXTENSIONS = ['.txt', '.md', '.doc', '.docx']
     
-    # Index storage
-    INDEX_DIR = Path(__file__).parent / 'chinese_index'
-    DOCUMENTS_DIR = Path('/Users/yuanan/Downloads/laicai_document')  # Your document path
+    # Index storage - 支持环境变量覆盖
+    INDEX_DIR = Path(os.getenv('INDEX_DIR', str(Path(__file__).parent / 'chinese_index')))
+    DOCUMENTS_DIR = Path(os.getenv('DOCUMENTS_DIR', str(Path(__file__).parent / 'documents')))
     
-    # API configuration
-    API_HOST = '0.0.0.0'
-    API_PORT = 5002  # Different port from English service
-    DEBUG = True
+    # API configuration - 支持环境变量覆盖
+    API_HOST = os.getenv('API_HOST', '0.0.0.0')
+    API_PORT = int(os.getenv('API_PORT', '5002'))
+    DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
     
     # Search settings
     DEFAULT_RESULTS_LIMIT = 10
