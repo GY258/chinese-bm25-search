@@ -48,14 +48,61 @@ class ChineseBM25Search:
         idf = math.log((self.num_documents - df + 0.5) / (df + 0.5))
         return max(0.0, idf)
     
+    def _calculate_title_match_score(self, query_terms: List[str], doc_title: str) -> float:
+        """
+        Calculate title match bonus score
+        Returns higher score for better title matches
+        """
+        if not query_terms or not doc_title:
+            return 0.0
+        
+        # Process title to get tokens
+        title_tokens = self.processor.preprocess_text(doc_title)
+        if not title_tokens:
+            return 0.0
+        
+        # Calculate match metrics
+        query_set = set(query_terms)
+        title_set = set(title_tokens)
+        
+        # Exact title match (all query terms in title)
+        if query_set.issubset(title_set):
+            return 10.0  # High bonus for exact title match
+        
+        # Partial title match
+        intersection = query_set.intersection(title_set)
+        if intersection:
+            # Calculate match ratio
+            match_ratio = len(intersection) / len(query_set)
+            
+            # Bonus based on match ratio
+            if match_ratio >= 0.8:
+                return 8.0  # Very high match
+            elif match_ratio >= 0.6:
+                return 6.0  # High match
+            elif match_ratio >= 0.4:
+                return 4.0  # Medium match
+            else:
+                return 2.0  # Low match
+        
+        # Check for substring matches in title
+        title_text = doc_title.lower()
+        query_text = ' '.join(query_terms).lower()
+        
+        if query_text in title_text:
+            return 7.0  # Substring match bonus
+        
+        return 0.0
+    
     def _calculate_bm25_score(self, query_terms: List[str], doc_id: int) -> float:
-        """Calculate BM25 score for Chinese text"""
+        """Calculate BM25 score for Chinese text with title match bonus"""
         if doc_id not in self.document_index:
             return 0.0
         
         doc_data = self.document_index[doc_id]
         doc_length = doc_data['length']
         term_frequencies = doc_data['term_frequencies']
+        doc_title = doc_data.get('title', '')
         
         score = 0.0
         
@@ -73,6 +120,10 @@ class ChineseBM25Search:
                 
                 term_score = idf * (numerator / denominator) * query_freq
                 score += term_score
+        
+        # Add title match bonus
+        title_bonus = self._calculate_title_match_score(query_terms, doc_title)
+        score += title_bonus
         
         return score
     
@@ -104,22 +155,44 @@ class ChineseBM25Search:
         
         print(f"📄 Found {len(candidate_docs)} candidate documents")
         
-        # Calculate BM25 scores
+        # Calculate BM25 scores with title match information
         scored_docs = []
         for doc_id in candidate_docs:
-            score = self._calculate_bm25_score(query_terms, doc_id)
+            doc_data = self.document_index[doc_id]
+            doc_title = doc_data.get('title', '')
+            
+            # Calculate base BM25 score (without title bonus)
+            base_score = 0.0
+            query_term_counts = Counter(query_terms)
+            
+            for term, query_freq in query_term_counts.items():
+                if term in doc_data['term_frequencies']:
+                    tf = doc_data['term_frequencies'][term]
+                    idf = self._calculate_idf(term)
+                    
+                    numerator = tf * (self.k1 + 1)
+                    denominator = tf + self.k1 * (1 - self.b + self.b * (doc_data['length'] / self.avg_doc_length))
+                    
+                    term_score = idf * (numerator / denominator) * query_freq
+                    base_score += term_score
+            
+            # Calculate title match bonus
+            title_bonus = self._calculate_title_match_score(query_terms, doc_title)
+            total_score = base_score + title_bonus
+            
             # Include documents that contain the query terms, even if score is 0
             # This handles cases with small document collections where IDF might be 0
-            if score >= 0:
-                doc_data = self.document_index[doc_id]
+            if total_score >= 0:
                 scored_docs.append({
                     'doc_id': doc_id,
-                    'score': score,
+                    'score': total_score,
+                    'base_score': base_score,
+                    'title_bonus': title_bonus,
                     'path': doc_data['path'],
-                    'title': doc_data['title'],
+                    'title': doc_title,
                     'length': doc_data['length'],
                     'chinese_chars': doc_data.get('chinese_chars', 0),
-                    'relevance': 'high' if score > 5.0 else 'medium' if score > 2.0 else 'low'
+                    'relevance': 'high' if total_score > 5.0 else 'medium' if total_score > 2.0 else 'low'
                 })
         
         # Sort by score descending
