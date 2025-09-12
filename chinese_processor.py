@@ -51,6 +51,7 @@ class ChineseDocumentProcessor:
         print(f"🇨🇳 Chinese processor initialized")
         print(f"   Stop words: {len(self.stop_words)}")
         print(f"   Processing mode: Precise segmentation with HMM")
+        print(f"   Title extraction: Enabled with 5x boosted indexing")
         
     def add_custom_dictionary(self, documents_sample: List[Path] = None):
         """
@@ -123,6 +124,68 @@ class ChineseDocumentProcessor:
                 continue
         
         return ""
+    
+    def extract_title_from_content(self, text_content: str, filename: str) -> str:
+        """
+        Extract title from document content using multiple strategies
+        Returns the best title found or falls back to filename
+        """
+        if not text_content or not text_content.strip():
+            return filename
+        
+        # Strategy 1: Look for markdown-style headers (# Title)
+        markdown_headers = re.findall(r'^#+\s*(.+)$', text_content, re.MULTILINE)
+        if markdown_headers:
+            # Take the first header that's not too long
+            for header in markdown_headers:
+                header = header.strip()
+                if 3 <= len(header) <= 50 and re.search(r'[\u4e00-\u9fff]', header):
+                    return header
+        
+        # Strategy 2: Look for Chinese title patterns
+        # Common patterns: "标题：", "题目：", "主题：", etc.
+        title_patterns = [
+            r'标题[：:]\s*(.+)',
+            r'题目[：:]\s*(.+)',
+            r'主题[：:]\s*(.+)',
+            r'名称[：:]\s*(.+)',
+            r'^(.+?)[：:]\s*$',  # General pattern: "Title:"
+        ]
+        
+        for pattern in title_patterns:
+            matches = re.findall(pattern, text_content, re.MULTILINE)
+            for match in matches:
+                match = match.strip()
+                if (3 <= len(match) <= 50 and 
+                    re.search(r'[\u4e00-\u9fff]', match) and
+                    not re.search(r'[。！？]', match)):  # Not a sentence
+                    return match
+        
+        # Strategy 3: Extract from first meaningful line
+        lines = text_content.split('\n')
+        for line in lines[:10]:  # Check first 10 lines
+            line = line.strip()
+            if (len(line) >= 3 and len(line) <= 50 and
+                re.search(r'[\u4e00-\u9fff]', line) and
+                not re.search(r'[。！？]', line) and  # Not a sentence
+                not re.search(r'^\d+[、.]', line)):  # Not numbered list
+                return line
+        
+        # Strategy 4: Extract meaningful part from filename
+        # Remove extension and common prefixes/suffixes
+        clean_filename = filename
+        if '.' in clean_filename:
+            clean_filename = clean_filename.rsplit('.', 1)[0]
+        
+        # Remove common date patterns
+        clean_filename = re.sub(r'\d{8,}', '', clean_filename)  # Remove dates like 20241228
+        clean_filename = re.sub(r'[_-]', ' ', clean_filename)  # Replace separators with spaces
+        clean_filename = clean_filename.strip()
+        
+        if clean_filename and len(clean_filename) >= 3:
+            return clean_filename
+        
+        return filename
     
     def preprocess_text(self, text: str) -> List[str]:
         """
@@ -206,7 +269,7 @@ class ChineseDocumentProcessor:
         return valid_documents
     
     def process_documents(self, documents: List[Path]) -> Tuple[Dict[int, Dict], Dict[str, List[Tuple[int, int]]]]:
-        """Process Chinese documents with optimized segmentation"""
+        """Process Chinese documents with optimized segmentation and title indexing with 5x weight"""
         
         # Build custom dictionary first
         if not self.custom_dict_loaded:
@@ -215,13 +278,14 @@ class ChineseDocumentProcessor:
         document_index = {}
         inverted_index = defaultdict(list)
         
-        print(f"🔄 Processing {len(documents)} Chinese documents...")
+        print(f"🔄 Processing {len(documents)} Chinese documents with title extraction...")
         
         stats = {
             'total_chars': 0,
             'total_tokens': 0,
             'chinese_docs': 0,
-            'processed_docs': 0
+            'processed_docs': 0,
+            'titles_extracted': 0
         }
         
         for doc_id, doc_path in enumerate(documents):
@@ -241,29 +305,46 @@ class ChineseDocumentProcessor:
             stats['chinese_docs'] += 1
             stats['total_chars'] += len(text_content)
             
-            # Process with Chinese segmentation
-            tokens = self.preprocess_text(text_content)
-            if not tokens:
+            # Extract title from content
+            extracted_title = self.extract_title_from_content(text_content, doc_path.name)
+            if extracted_title != doc_path.name:
+                stats['titles_extracted'] += 1
+            
+            # Process document content with Chinese segmentation
+            content_tokens = self.preprocess_text(text_content)
+            if not content_tokens:
                 continue
             
-            stats['total_tokens'] += len(tokens)
+            # Process title with Chinese segmentation
+            title_tokens = self.preprocess_text(extracted_title)
+            
+            # Combine content and title tokens with boosted title weights
+            # Title terms get 5x weight to make them more searchable
+            combined_tokens = content_tokens.copy()
+            for title_token in title_tokens:
+                # Add title token 5 times to boost its weight
+                combined_tokens.extend([title_token] * 5)
+            
+            stats['total_tokens'] += len(combined_tokens)
             stats['processed_docs'] += 1
             
-            # Calculate term frequencies
-            term_frequencies = Counter(tokens)
+            # Calculate term frequencies (title terms will have higher frequency)
+            term_frequencies = Counter(combined_tokens)
             
-            # Store document metadata
+            # Store document metadata with both filename and extracted title
             document_index[doc_id] = {
                 'path': str(doc_path),
-                'title': doc_path.name,
-                'tokens': len(tokens),
-                'length': len(tokens),
+                'title': extracted_title,  # Use extracted title instead of filename
+                'filename': doc_path.name,  # Keep original filename
+                'tokens': len(content_tokens),  # Content tokens only
+                'title_tokens': len(title_tokens),  # Title tokens
+                'length': len(combined_tokens),  # Combined length for BM25
                 'term_frequencies': term_frequencies,
                 'chinese_chars': chinese_chars,
                 'total_chars': len(text_content)
             }
             
-            # Update inverted index
+            # Update inverted index with boosted title terms
             for term, freq in term_frequencies.items():
                 inverted_index[term].append((doc_id, freq))
         
@@ -271,16 +352,18 @@ class ChineseDocumentProcessor:
         print(f"\n📊 Processing Results:")
         print(f"   Successfully processed: {stats['processed_docs']} documents")
         print(f"   Chinese documents: {stats['chinese_docs']}")
+        print(f"   Titles extracted: {stats['titles_extracted']}")
         print(f"   Total characters: {stats['total_chars']:,}")
         print(f"   Total tokens extracted: {stats['total_tokens']:,}")
         print(f"   Unique terms (vocabulary): {len(inverted_index):,}")
         if stats['processed_docs'] > 0:
             print(f"   Average tokens per document: {stats['total_tokens']/stats['processed_docs']:.1f}")
+            print(f"   Title extraction rate: {stats['titles_extracted']/stats['processed_docs']*100:.1f}%")
         
         return document_index, dict(inverted_index)
     
     def save_index(self, document_index: Dict, inverted_index: Dict, index_dir: Path):
-        """Save Chinese index with metadata"""
+        """Save Chinese index with metadata including extracted titles"""
         index_dir.mkdir(exist_ok=True)
         
         # Save document index
@@ -290,7 +373,9 @@ class ChineseDocumentProcessor:
                 serializable_docs[doc_id] = {
                     'path': doc_data['path'],
                     'title': doc_data['title'],
+                    'filename': doc_data.get('filename', doc_data['title']),
                     'tokens': doc_data['tokens'],
+                    'title_tokens': doc_data.get('title_tokens', 0),
                     'length': doc_data['length'],
                     'term_frequencies': dict(doc_data['term_frequencies']),
                     'chinese_chars': doc_data.get('chinese_chars', 0),
@@ -302,7 +387,7 @@ class ChineseDocumentProcessor:
         with open(index_dir / 'chinese_inverted_index.pkl', 'wb') as f:
             pickle.dump(inverted_index, f)
         
-        print(f"💾 Chinese index saved to {index_dir}")
+        print(f"💾 Chinese index with searchable titles (5x weight) saved to {index_dir}")
     
     def load_index(self, index_dir: Path) -> Tuple[Dict, Dict]:
         """Load Chinese index from disk"""
@@ -315,7 +400,9 @@ class ChineseDocumentProcessor:
             processed_docs[int(doc_id)] = {
                 'path': doc_data['path'],
                 'title': doc_data['title'],
+                'filename': doc_data.get('filename', doc_data['title']),
                 'tokens': doc_data['tokens'],
+                'title_tokens': doc_data.get('title_tokens', 0),
                 'length': doc_data['length'],
                 'term_frequencies': Counter(doc_data['term_frequencies']),
                 'chinese_chars': doc_data.get('chinese_chars', 0),
