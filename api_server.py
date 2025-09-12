@@ -132,7 +132,7 @@ def search_documents():
         results = search_engine.search(query, limit)
         search_time = (datetime.now() - start_time).total_seconds()
         
-        # 添加文档片段
+        # 添加文档片段和标题匹配信息
         if include_snippets and results:
             for result in results:
                 try:
@@ -141,6 +141,15 @@ def search_documents():
                     )
                 except Exception:
                     result['snippet'] = "无法获取片段"
+                
+                # 添加标题匹配详细信息
+                if 'title_bonus' in result:
+                    result['title_match_info'] = {
+                        'base_score': round(result.get('base_score', 0), 3),
+                        'title_bonus': round(result.get('title_bonus', 0), 3),
+                        'total_score': round(result.get('score', 0), 3),
+                        'title_match_level': _get_title_match_level(result.get('title_bonus', 0))
+                    }
         
         return jsonify({
             "success": True,
@@ -281,6 +290,23 @@ def get_term_info(term):
             "error": "获取词汇信息失败",
             "message": str(e)
         }), 500
+
+# ==================== 辅助函数 ====================
+
+def _get_title_match_level(title_bonus: float) -> str:
+    """根据标题匹配加分返回匹配级别描述"""
+    if title_bonus >= 10.0:
+        return "完全匹配"
+    elif title_bonus >= 8.0:
+        return "高度匹配"
+    elif title_bonus >= 6.0:
+        return "良好匹配"
+    elif title_bonus >= 4.0:
+        return "部分匹配"
+    elif title_bonus >= 2.0:
+        return "轻微匹配"
+    else:
+        return "无匹配"
 
 # ==================== 错误处理 ====================
 
