@@ -1,5 +1,7 @@
 import math
 import numpy as np
+import re
+from pathlib import Path
 from collections import Counter, defaultdict
 from typing import List, Dict, Tuple, Optional
 from chinese_processor import ChineseDocumentProcessor
@@ -218,48 +220,55 @@ class ChineseBM25Search:
         scored_docs.sort(key=lambda x: x['score'], reverse=True)
         return scored_docs[:limit]
     
-    def get_chinese_snippet(self, doc_path: str, query: str, snippet_length: int = 300) -> str:
+    def get_chinese_snippet(self, doc_path: str, query: str, snippet_length: int = 3000) -> str:
         """
         Extract relevant Chinese text snippet containing query terms
+        Returns full file content if snippet extraction fails
         """
         try:
             from pathlib import Path
             import re
             
-            # Handle path mapping - convert /app/documents/ to actual documents path
-            if doc_path.startswith('/app/documents/'):
-                filename = Path(doc_path).name
-                actual_path = ChineseConfig.DOCUMENTS_DIR / filename
-                
-                # If exact filename doesn't exist, try to find similar files
-                if not actual_path.exists():
-                    # Try to find files with similar names using multiple strategies
-                    import glob
-                    filename_base = filename.replace('.txt', '').replace('.md', '')
-                    
-                    # Try different matching patterns
-                    patterns = [
-                        str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base}*"),
-                        str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base.split('产品标准')[0]}*") if '产品标准' in filename_base else None,
-                        str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base.split('SOP')[0]}*") if 'SOP' in filename_base else None,
-                    ]
-                    
-                    matches = []
-                    for pattern in patterns:
-                        if pattern:
-                            matches = glob.glob(pattern)
-                            if matches:
-                                break
-                    
-                    if matches:
-                        actual_path = Path(matches[0])  # Use first match
-                
-                doc_path = str(actual_path)
+            # Handle path mapping for Docker environment
+            # Extract filename from any path format (host or container)
+            filename = Path(doc_path).name
             
-            # Read file with Chinese encoding support
-            content = self.processor._read_file_with_encoding(Path(doc_path))
+            # Always use the container documents directory
+            actual_path = ChineseConfig.DOCUMENTS_DIR / filename
+            
+            # If exact filename doesn't exist, try to find similar files
+            if not actual_path.exists():
+                # Try to find files with similar names using multiple strategies
+                import glob
+                filename_base = filename.replace('.txt', '').replace('.md', '')
+                
+                # Try different matching patterns
+                patterns = [
+                    str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base}*"),
+                    str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base.split('产品标准')[0]}*") if '产品标准' in filename_base else None,
+                    str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base.split('SOP')[0]}*") if 'SOP' in filename_base else None,
+                ]
+                
+                matches = []
+                for pattern in patterns:
+                    if pattern:
+                        matches = glob.glob(pattern)
+                        if matches:
+                            break
+                
+                if matches:
+                    actual_path = Path(matches[0])  # Use first match
+            
+            doc_path = str(actual_path)
+            
+            # Read file with enhanced Chinese encoding support
+            content = self._read_file_with_multiple_encodings(Path(doc_path))
             if not content:
                 return "无法读取文件内容"
+            
+            # If snippet_length is 0 or negative, return full content
+            if snippet_length <= 0:
+                return content
             
             query_terms = self.processor.preprocess_text(query)
             if not query_terms:
@@ -292,7 +301,83 @@ class ChineseBM25Search:
             return best_sentence
             
         except Exception as e:
+            # Fallback: try to read the file directly and return content
+            try:
+                content = self._read_file_with_multiple_encodings(Path(doc_path))
+                if content:
+                    return content[:snippet_length] + "..." if len(content) > snippet_length else content
+            except:
+                pass
             return f"读取片段时出错: {e}"
+    
+    def _read_file_with_multiple_encodings(self, file_path: Path) -> str:
+        """
+        Enhanced file reading with multiple encoding attempts
+        """
+        encodings = ['utf-8', 'gbk', 'gb2312', 'big5', 'utf-8-sig', 'latin1']
+        
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding, errors='ignore') as f:
+                    content = f.read()
+                    # Prefer encoding that gives us Chinese characters
+                    if re.search(r'[\u4e00-\u9fff]', content):
+                        return content
+                    elif encoding == 'utf-8':  # Fallback
+                        return content
+            except (UnicodeDecodeError, FileNotFoundError, PermissionError):
+                continue
+        
+        return ""
+    
+    def get_full_file_content(self, doc_path: str) -> str:
+        """
+        Get the complete content of a document file
+        """
+        try:
+            from pathlib import Path
+            
+            # Handle path mapping for Docker environment
+            # Extract filename from any path format (host or container)
+            filename = Path(doc_path).name
+            
+            # Always use the container documents directory
+            actual_path = ChineseConfig.DOCUMENTS_DIR / filename
+            
+            # If exact filename doesn't exist, try to find similar files
+            if not actual_path.exists():
+                # Try to find files with similar names using multiple strategies
+                import glob
+                filename_base = filename.replace('.txt', '').replace('.md', '')
+                
+                # Try different matching patterns
+                patterns = [
+                    str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base}*"),
+                    str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base.split('产品标准')[0]}*") if '产品标准' in filename_base else None,
+                    str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base.split('SOP')[0]}*") if 'SOP' in filename_base else None,
+                ]
+                
+                matches = []
+                for pattern in patterns:
+                    if pattern:
+                        matches = glob.glob(pattern)
+                        if matches:
+                            break
+                
+                if matches:
+                    actual_path = Path(matches[0])  # Use first match
+            
+            doc_path = str(actual_path)
+            
+            # Read file with enhanced Chinese encoding support
+            content = self._read_file_with_multiple_encodings(Path(doc_path))
+            if not content:
+                return "无法读取文件内容"
+            
+            return content
+            
+        except Exception as e:
+            return f"读取文件时出错: {e}"
     
     def get_term_statistics(self, term: str) -> Dict:
         """Get statistics for a Chinese term"""

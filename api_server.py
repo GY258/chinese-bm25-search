@@ -137,7 +137,7 @@ def search_documents():
             for result in results:
                 try:
                     result['snippet'] = search_engine.get_chinese_snippet(
-                        result['path'], query, 200
+                        result['path'], query, 0
                     )
                 except Exception:
                     result['snippet'] = "无法获取片段"

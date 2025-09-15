@@ -20,7 +20,7 @@ echo "🛑 停止现有服务..."
 $DC down || true
 
 echo "�� 构建Docker镜像..."
-$DC build --no-cache
+$DC build 
 
 echo "�� 启动服务..."
 $DC up -d
