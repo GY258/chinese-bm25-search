@@ -29,6 +29,7 @@ class ChineseBM25Search:
         print(f"   Average document length: {self.avg_doc_length:.1f} tokens")
         print(f"   Vocabulary size: {len(self.inverted_index):,}")
         print(f"   BM25 parameters: k1={self.k1}, b={self.b}")
+        print(f"   Keyword boosts: {ChineseConfig.KEYWORD_BOOSTS}")
     
     def _calculate_avg_doc_length(self) -> float:
         """Calculate average document length"""
@@ -48,10 +49,14 @@ class ChineseBM25Search:
         idf = math.log((self.num_documents - df + 0.5) / (df + 0.5))
         return max(0.0, idf)
     
+    def _get_keyword_boost(self, term: str) -> float:
+        """Get keyword boost multiplier for important terms"""
+        return ChineseConfig.KEYWORD_BOOSTS.get(term, 1.0)
+    
     def _calculate_title_match_score(self, query_terms: List[str], doc_title: str) -> float:
         """
-        Calculate title match bonus score
-        Returns higher score for better title matches
+        Calculate title match bonus score with enhanced weighting
+        Returns higher score for better title matches, especially for important keywords
         """
         if not query_terms or not doc_title:
             return 0.0
@@ -65,9 +70,15 @@ class ChineseBM25Search:
         query_set = set(query_terms)
         title_set = set(title_tokens)
         
+        # Check for important keywords in title
+        keyword_bonus = 0.0
+        for term in query_terms:
+            if term in ChineseConfig.KEYWORD_BOOSTS and term in title_set:
+                keyword_bonus += ChineseConfig.KEYWORD_BOOSTS[term] * 2.0  # Extra bonus for keywords in title
+        
         # Exact title match (all query terms in title)
         if query_set.issubset(title_set):
-            return 10.0  # High bonus for exact title match
+            return ChineseConfig.TITLE_EXACT_MATCH_BONUS + keyword_bonus
         
         # Partial title match
         intersection = query_set.intersection(title_set)
@@ -77,25 +88,25 @@ class ChineseBM25Search:
             
             # Bonus based on match ratio
             if match_ratio >= 0.8:
-                return 8.0  # Very high match
+                return ChineseConfig.TITLE_PARTIAL_MATCH_BONUS[0.8] + keyword_bonus
             elif match_ratio >= 0.6:
-                return 6.0  # High match
+                return ChineseConfig.TITLE_PARTIAL_MATCH_BONUS[0.6] + keyword_bonus
             elif match_ratio >= 0.4:
-                return 4.0  # Medium match
+                return ChineseConfig.TITLE_PARTIAL_MATCH_BONUS[0.4] + keyword_bonus
             else:
-                return 2.0  # Low match
+                return 2.0 + keyword_bonus
         
         # Check for substring matches in title
         title_text = doc_title.lower()
         query_text = ' '.join(query_terms).lower()
         
         if query_text in title_text:
-            return 7.0  # Substring match bonus
+            return ChineseConfig.TITLE_SUBSTRING_MATCH_BONUS + keyword_bonus
         
-        return 0.0
+        return keyword_bonus
     
     def _calculate_bm25_score(self, query_terms: List[str], doc_id: int) -> float:
-        """Calculate BM25 score for Chinese text with title match bonus"""
+        """Calculate BM25 score for Chinese text with enhanced keyword weighting"""
         if doc_id not in self.document_index:
             return 0.0
         
@@ -114,14 +125,17 @@ class ChineseBM25Search:
                 tf = term_frequencies[term]  # Term frequency in document
                 idf = self._calculate_idf(term)
                 
-                # BM25 formula with query term frequency consideration
+                # Get keyword boost multiplier
+                keyword_boost = self._get_keyword_boost(term)
+                
+                # BM25 formula with query term frequency consideration and keyword boost
                 numerator = tf * (self.k1 + 1)
                 denominator = tf + self.k1 * (1 - self.b + self.b * (doc_length / self.avg_doc_length))
                 
-                term_score = idf * (numerator / denominator) * query_freq
+                term_score = idf * (numerator / denominator) * query_freq * keyword_boost
                 score += term_score
         
-        # Add title match bonus
+        # Add enhanced title match bonus
         title_bonus = self._calculate_title_match_score(query_terms, doc_title)
         score += title_bonus
         
@@ -129,7 +143,7 @@ class ChineseBM25Search:
     
     def search(self, query: str, limit: int = None) -> List[Dict]:
         """
-        Search Chinese documents using BM25
+        Search Chinese documents using enhanced BM25 with keyword boosting
         """
         if limit is None:
             limit = ChineseConfig.DEFAULT_RESULTS_LIMIT
@@ -141,6 +155,11 @@ class ChineseBM25Search:
             return []
         
         print(f"🔍 Chinese search terms: {query_terms}")
+        
+        # Check for boosted keywords in query
+        boosted_terms = [term for term in query_terms if term in ChineseConfig.KEYWORD_BOOSTS]
+        if boosted_terms:
+            print(f"🚀 Boosted keywords found: {boosted_terms}")
         
         # Find candidate documents
         candidate_docs = set()
@@ -155,13 +174,13 @@ class ChineseBM25Search:
         
         print(f"📄 Found {len(candidate_docs)} candidate documents")
         
-        # Calculate BM25 scores with title match information
+        # Calculate enhanced BM25 scores with keyword boosting
         scored_docs = []
         for doc_id in candidate_docs:
             doc_data = self.document_index[doc_id]
             doc_title = doc_data.get('title', '')
             
-            # Calculate base BM25 score (without title bonus)
+            # Calculate base BM25 score with keyword boosting
             base_score = 0.0
             query_term_counts = Counter(query_terms)
             
@@ -169,19 +188,19 @@ class ChineseBM25Search:
                 if term in doc_data['term_frequencies']:
                     tf = doc_data['term_frequencies'][term]
                     idf = self._calculate_idf(term)
+                    keyword_boost = self._get_keyword_boost(term)
                     
                     numerator = tf * (self.k1 + 1)
                     denominator = tf + self.k1 * (1 - self.b + self.b * (doc_data['length'] / self.avg_doc_length))
                     
-                    term_score = idf * (numerator / denominator) * query_freq
+                    term_score = idf * (numerator / denominator) * query_freq * keyword_boost
                     base_score += term_score
             
-            # Calculate title match bonus
+            # Calculate enhanced title match bonus
             title_bonus = self._calculate_title_match_score(query_terms, doc_title)
             total_score = base_score + title_bonus
             
             # Include documents that contain the query terms, even if score is 0
-            # This handles cases with small document collections where IDF might be 0
             if total_score >= 0:
                 scored_docs.append({
                     'doc_id': doc_id,
@@ -192,7 +211,7 @@ class ChineseBM25Search:
                     'title': doc_title,
                     'length': doc_data['length'],
                     'chinese_chars': doc_data.get('chinese_chars', 0),
-                    'relevance': 'high' if total_score > 5.0 else 'medium' if total_score > 2.0 else 'low'
+                    'relevance': 'high' if total_score > 8.0 else 'medium' if total_score > 3.0 else 'low'
                 })
         
         # Sort by score descending
@@ -206,6 +225,37 @@ class ChineseBM25Search:
         try:
             from pathlib import Path
             import re
+            
+            # Handle path mapping - convert /app/documents/ to actual documents path
+            if doc_path.startswith('/app/documents/'):
+                filename = Path(doc_path).name
+                actual_path = ChineseConfig.DOCUMENTS_DIR / filename
+                
+                # If exact filename doesn't exist, try to find similar files
+                if not actual_path.exists():
+                    # Try to find files with similar names using multiple strategies
+                    import glob
+                    filename_base = filename.replace('.txt', '').replace('.md', '')
+                    
+                    # Try different matching patterns
+                    patterns = [
+                        str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base}*"),
+                        str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base.split('产品标准')[0]}*") if '产品标准' in filename_base else None,
+                        str(ChineseConfig.DOCUMENTS_DIR / f"*{filename_base.split('SOP')[0]}*") if 'SOP' in filename_base else None,
+                    ]
+                    
+                    matches = []
+                    for pattern in patterns:
+                        if pattern:
+                            matches = glob.glob(pattern)
+                            if matches:
+                                break
+                    
+                    if matches:
+                        actual_path = Path(matches[0])  # Use first match
+                
+                doc_path = str(actual_path)
+            
             # Read file with Chinese encoding support
             content = self.processor._read_file_with_encoding(Path(doc_path))
             if not content:
