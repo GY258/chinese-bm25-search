@@ -30,10 +30,10 @@ last_indexed = None
 def initialize_search_engine():
     """初始化搜索引擎"""
     global search_engine, last_indexed
-    
+
     try:
         processor = ChineseDocumentProcessor()
-        
+
         # 检查索引是否存在
         if (ChineseConfig.INDEX_DIR / 'chinese_documents.json').exists():
             logger.info("加载现有索引...")
@@ -45,7 +45,7 @@ def initialize_search_engine():
         else:
             logger.warning("索引不存在，需要先构建索引")
             return False
-            
+
     except Exception as e:
         logger.error(f"搜索引擎初始化失败: {e}")
         return False
@@ -83,7 +83,7 @@ def api_documentation():
 def health_check():
     """健康检查接口"""
     status = "healthy" if search_engine else "unhealthy"
-    
+
     return jsonify({
         "status": status,
         "service": "Chinese BM25 Retrieval Service",
@@ -104,7 +104,7 @@ def search_documents():
             "message": "请先调用 POST /build_index 构建索引",
             "code": "ENGINE_NOT_READY"
         }), 503
-    
+
     try:
         # 获取参数
         if request.method == 'POST':
@@ -116,7 +116,7 @@ def search_documents():
             query = request.args.get('query', '')
             limit = int(request.args.get('limit', 10))
             include_snippets = request.args.get('snippets', 'true').lower() == 'true'
-        
+
         # 验证参数
         if not query.strip():
             return jsonify({
@@ -124,14 +124,14 @@ def search_documents():
                 "message": "请提供query参数",
                 "example": "/search?query=猪肝"
             }), 400
-        
+
         limit = min(max(1, limit), 50)  # 限制在1-50之间
-        
+
         # 执行搜索
         start_time = datetime.now()
         results = search_engine.search(query, limit)
         search_time = (datetime.now() - start_time).total_seconds()
-        
+
         # 添加文档片段和标题匹配信息
         if include_snippets and results:
             for result in results:
@@ -141,7 +141,7 @@ def search_documents():
                     )
                 except Exception:
                     result['snippet'] = "无法获取片段"
-                
+
                 # 添加标题匹配详细信息
                 if 'title_bonus' in result:
                     result['title_match_info'] = {
@@ -150,7 +150,7 @@ def search_documents():
                         'total_score': round(result.get('score', 0), 3),
                         'title_match_level': _get_title_match_level(result.get('title_bonus', 0))
                     }
-        
+
         return jsonify({
             "success": True,
             "query": query,
@@ -159,7 +159,7 @@ def search_documents():
             "results": results,
             "timestamp": datetime.now().isoformat()
         })
-        
+
     except Exception as e:
         logger.error(f"搜索失败: {e}")
         return jsonify({
@@ -176,21 +176,21 @@ def get_statistics():
             "error": "搜索引擎未初始化",
             "code": "ENGINE_NOT_READY"
         }), 503
-    
+
     try:
         # 计算统计信息
         total_chars = sum(
             doc.get('chinese_chars', 0) 
             for doc in search_engine.document_index.values()
         )
-        
+
         # 词频统计
         term_frequencies = {}
         for term, docs in search_engine.inverted_index.items():
             term_frequencies[term] = sum(freq for _, freq in docs)
-        
+
         top_terms = sorted(term_frequencies.items(), key=lambda x: x[1], reverse=True)[:10]
-        
+
         return jsonify({
             "success": True,
             "statistics": {
@@ -207,7 +207,7 @@ def get_statistics():
             },
             "timestamp": datetime.now().isoformat()
         })
-        
+
     except Exception as e:
         logger.error(f"获取统计信息失败: {e}")
         return jsonify({
@@ -219,39 +219,39 @@ def get_statistics():
 def rebuild_index():
     """重建搜索索引"""
     global search_engine, last_indexed
-    
+
     try:
         processor = ChineseDocumentProcessor()
-        
+
         # 查找文档
         documents = processor.find_documents(ChineseConfig.DOCUMENTS_DIR)
-        
+
         if not documents:
             return jsonify({
                 "error": "未找到文档",
                 "message": f"在 {ChineseConfig.DOCUMENTS_DIR} 中未找到支持的文档",
                 "supported_extensions": ChineseConfig.SUPPORTED_EXTENSIONS
             }), 400
-        
+
         # 处理文档
         logger.info(f"开始处理 {len(documents)} 个文档...")
         document_index, inverted_index = processor.process_documents(documents)
-        
+
         if not document_index:
             return jsonify({
                 "error": "文档处理失败",
                 "message": "没有有效的文档可以处理"
             }), 400
-        
+
         # 保存索引
         processor.save_index(document_index, inverted_index, ChineseConfig.INDEX_DIR)
-        
+
         # 重新初始化搜索引擎
         search_engine = ChineseBM25Search(document_index, inverted_index)
         last_indexed = datetime.now()
-        
+
         logger.info("索引重建完成")
-        
+
         return jsonify({
             "success": True,
             "message": "索引重建成功",
@@ -259,7 +259,7 @@ def rebuild_index():
             "vocabulary_size": len(inverted_index),
             "rebuild_time": last_indexed.isoformat()
         })
-        
+
     except Exception as e:
         logger.error(f"重建索引失败: {e}")
         return jsonify({
@@ -276,7 +276,7 @@ def get_term_info(term):
             "error": "搜索引擎未初始化",
             "code": "ENGINE_NOT_READY"
         }), 503
-    
+
     try:
         stats = search_engine.get_term_statistics(term)
         return jsonify({
@@ -284,7 +284,7 @@ def get_term_info(term):
             "term_info": stats,
             "timestamp": datetime.now().isoformat()
         })
-        
+
     except Exception as e:
         return jsonify({
             "error": "获取词汇信息失败",
@@ -337,19 +337,19 @@ def start_server():
     print(f"🌐 服务地址: http://localhost:{ChineseConfig.API_PORT}")
     print(f"📖 API文档: http://localhost:{ChineseConfig.API_PORT}/")
     print("=" * 50)
-    
+
     # 初始化搜索引擎
     if initialize_search_engine():
         print("✅ 搜索引擎就绪!")
     else:
         print("⚠️  搜索引擎未就绪，请调用 POST /build_index")
-    
+
     print("\n🚀 API服务启动中...")
     print("📡 支持跨域请求 (CORS)")
     print("🔄 RESTful接口已准备就绪")
     print("\n按 Ctrl+C 停止服务")
     print("=" * 50)
-    
+
     # 启动Flask服务
     app.run(
         host='0.0.0.0',  # 允许外部访问
